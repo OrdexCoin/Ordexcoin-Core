@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+#  ordexcoind The ordexcoin core server.
+#
+#
+# chkconfig: 345 80 20
+# description: ordexcoind
+# processname: ordexcoind
+#
+
+# Source function library.
+. /etc/init.d/functions
+
+# you can override defaults in /etc/sysconfig/ordexcoind, see below
+if [ -f /etc/sysconfig/ordexcoind ]; then
+        . /etc/sysconfig/ordexcoind
+fi
+
+RETVAL=0
+
+prog=ordexcoind
+# you can override the lockfile via ORDEXCOIND_LOCKFILE in /etc/sysconfig/ordexcoind
+lockfile=${ORDEXCOIND_LOCKFILE-/var/lock/subsys/ordexcoind}
+
+# ordexcoind defaults to /usr/bin/ordexcoind, override with ORDEXCOIND_BIN
+ordexcoind=${ORDEXCOIND_BIN-/usr/bin/ordexcoind}
+
+# ordexcoind opts default to -disablewallet, override with ORDEXCOIND_OPTS
+ordexcoind_opts=${ORDEXCOIND_OPTS--disablewallet}
+
+start() {
+    echo -n $"Starting $prog: "
+    daemon $DAEMONOPTS $ordexcoind $ordexcoind_opts
+    RETVAL=$?
+    echo
+    [ $RETVAL -eq 0 ] && touch $lockfile
+    return $RETVAL
+}
+
+stop() {
+    echo -n $"Stopping $prog: "
+    killproc $prog -t600
+    RETVAL=$?
+    echo
+    [ $RETVAL -eq 0 ] && rm -f $lockfile
+    return $RETVAL
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    status)
+        status $prog
+        ;;
+    restart)
+        stop
+        start
+        ;;
+    *)
+        echo "Usage: service $prog {start|stop|status|restart}"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,7 @@
+[main]
+host = https://www.transifex.com
+
+[o:ordexcoin:p:ordexcoin:r:qt-translation-025x]
+file_filter = src/qt/locale/ordexcoin_<lang>.xlf
+source_file = src/qt/locale/ordexcoin_en.xlf
+source_lang = en

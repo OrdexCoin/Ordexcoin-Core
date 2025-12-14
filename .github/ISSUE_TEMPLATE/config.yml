@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OrdexCoin Core Security Policy
+    url: https://github.com/ordexcoin/ordexcoin/blob/master/SECURITY.md
+    about: View security policy
+  - name: OrdexCoin Core Developers
+    url: https://bitcoincore.org
+    about: OrdexCoin Core homepage

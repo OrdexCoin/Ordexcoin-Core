@@ -1,0 +1,33 @@
+# /etc/conf.d/ordexcoind: config file for /etc/init.d/ordexcoind
+
+# Config file location
+#ORDEXCOIND_CONFIGFILE="/etc/ordexcoin/ordexcoin.conf"
+
+# What directory to write pidfile to?  (created and owned by $ORDEXCOIND_USER)
+#ORDEXCOIND_PIDDIR="/var/run/ordexcoind"
+
+# What filename to give the pidfile
+#ORDEXCOIND_PIDFILE="${ORDEXCOIND_PIDDIR}/ordexcoind.pid"
+
+# Where to write ordexcoind data (be mindful that the blockchain is large)
+#ORDEXCOIND_DATADIR="/var/lib/ordexcoind"
+
+# User and group to own ordexcoind process
+#ORDEXCOIND_USER="ordexcoin"
+#ORDEXCOIND_GROUP="ordexcoin"
+
+# Path to ordexcoind executable
+#ORDEXCOIND_BIN="/usr/bin/ordexcoind"
+
+# Nice value to run ordexcoind under
+#ORDEXCOIND_NICE=0
+
+# Additional options (avoid -conf and -datadir, use flags above)
+#ORDEXCOIND_OPTS=""
+
+# The timeout in seconds OpenRC will wait for ordexcoind to terminate
+# after a SIGTERM has been raised.
+# Note that this will be mapped as argument to start-stop-daemon's
+# '--retry' option, which means you can specify a retry schedule
+# here. For more information see man 8 start-stop-daemon.
+ORDEXCOIND_SIGTERM_TIMEOUT=600
