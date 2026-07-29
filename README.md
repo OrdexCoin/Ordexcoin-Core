@@ -2,9 +2,9 @@
   <img src="icon.png" alt="OrdexCoin Logo" width="256">
 </p>
 
-# OrdexCoin Core v25.0.0
+# OrdexCoin Core vASSERT version
 
-Bitcoin Core v25.0 fork by the OrdexNetwork project with vASERT difficulty adjustment.
+OrdexCoin with vASERT difficulty adjustment feature.
 
 This repository contains the Docker-based build system and the source overlay (`Ordexcoin-Core-vASERT-4790.zip`) that applies branding and configuration changes on top of Bitcoin Core v25.0.
 
