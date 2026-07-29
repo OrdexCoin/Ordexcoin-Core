@@ -27,18 +27,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     patch \
     pkg-config \
     python3 \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 
-# Build depends system to /opt/depends (not in-tree) so it survives
-# the subsequent COPY . which would overwrite an in-tree depends/ dir.
-COPY depends/ ./depends/
-COPY configure.ac autogen.sh Makefile.am ./
-COPY build-aux/ ./build-aux/
-COPY .python-version ./
+# Copy the OrdexCoin overlay zip
+COPY Ordexcoin-Core-vASERT-4790.zip .
 
-RUN make -C depends HOST="${HOST}" -j$(nproc) \
+# Extract source files needed for cross-compile dependency build
+# Normalize Windows backslash paths to forward slashes for Linux.
+COPY extract-zip.py /usr/local/bin/extract-zip.py
+RUN python3 /usr/local/bin/extract-zip.py Ordexcoin-Core-vASERT-4790.zip
+
+# Build depends system to /opt/depends (not in-tree) so it survives
+# the subsequent zip extraction which would overwrite an in-tree depends/ dir.
+# Zip extraction loses execute permissions on depends/ scripts.
+RUN chmod +x depends/config.guess depends/config.sub depends/gen_id 2>/dev/null; \
+    make -C depends HOST="${HOST}" -j$(nproc) \
     && mkdir -p /opt/depends \
     && cp -a "depends/${HOST}" "/opt/depends/${HOST}"
 
@@ -47,8 +53,12 @@ RUN curl -sL https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0.tar.gz -
     && tar -xf bitcoin-25.0.tar.gz --strip-components=1 \
     && rm -rf bitcoin-25.0.tar.gz
 
-# Overlay OrdexCoin checkout
-COPY . .
+# Overlay full OrdexCoin source on top from the zip archive
+# Normalize Windows backslash paths to forward slashes for Linux.
+RUN python3 /usr/local/bin/extract-zip.py Ordexcoin-Core-vASERT-4790.zip && rm Ordexcoin-Core-vASERT-4790.zip
+
+# Restore system m4 macros that the zip overlay may have removed from build-aux/
+RUN cp /usr/share/aclocal/pkg.m4 build-aux/m4/
 
 # Remove the un-built depends/ from the checkout, restore the built one
 RUN rm -rf depends/${HOST} \
@@ -62,8 +72,18 @@ RUN rm -rf depends/${HOST} \
 RUN set -e; \
   sed -i '1i\if ENABLE_TESTS' src/Makefile.qttest.include \
     && echo 'endif' >> src/Makefile.qttest.include; \
-  sed -i 's/ORDEXCOIN_CONF_FILENAME/BITCOIN_CONF_FILENAME/g; s/ORDEXCOIN_SETTINGS_FILENAME/BITCOIN_SETTINGS_FILENAME/g' \
-    src/init.cpp src/ordexcoin-cli.cpp; \
+  sed -i \
+    -e 's/BITCOIN_CONF_FILENAME/ORDEXCOIN_CONF_FILENAME/g' \
+    -e 's/BITCOIN_SETTINGS_FILENAME/ORDEXCOIN_SETTINGS_FILENAME/g' \
+    -e 's/"bitcoin\.conf"/"ordexcoin.conf"/g' \
+    -e 's|"/\.bitcoin"|"/.ordexcoin"|g' \
+    -e 's|"\.bitcoin"|".ordexcoin"|g' \
+    -e 's|"Bitcoin"|"Ordexcoin"|g' \
+    src/util/system.cpp; \
+  sed -i \
+    -e 's/BITCOIN_CONF_FILENAME/ORDEXCOIN_CONF_FILENAME/g' \
+    -e 's/BITCOIN_SETTINGS_FILENAME/ORDEXCOIN_SETTINGS_FILENAME/g' \
+    src/util/system.h; \
   \
   for pair in \
     src/script/ordexcoinconsensus.cpp:bitcoinconsensus.cpp \
@@ -135,14 +155,54 @@ RUN set -e; \
       -e 's/\bBTC\b/OXC/g' \
       -e 's/\bmBTC\b/mOXC/g' \
       -e 's/\buBTC\b/uOXC/g' \
+      -e 's/"bitcoin-qt"/"ordexcoin-qt"/g' \
+      -e 's/"bitcoin:"/"ordexcoin:"/g' \
+      -e 's/"bitcoin:\/\//"ordexcoin:\/\//g' \
+      -e 's/"bitcoin-core"/"ordexcoin-core"/g' \
+      -e 's/\bBITCOIND\b/ORDEXCOIND/g' \
+      -e 's/\bbitcoind\b/ordexcoind/g' \
+      -e 's/"Bitcoin block chain"/"OrdexCoin block chain"/g' \
+      -e 's/"Bitcoin command-line options"/"OrdexCoin command-line options"/g' \
+      -e 's/"Bitcoin network"/"OrdexCoin network"/g' \
+      -e 's/"Enter a Bitcoin address"/"Enter an OrdexCoin address"/g' \
       "$f" 2>/dev/null; \
-  done
+  done; \
+  \
+  # Fix branding in non-Qt source files \
+  for f in $(find src/ -name '*.cpp' -o -name '*.h' \
+    -not -path 'src/qt/*' \
+    -not -path 'src/leveldb/*' \
+    -not -path 'src/crc32c/*' \
+    -not -path 'src/minisketch/*' \
+    -not -path 'src/secp256k1/*' \
+    -not -path 'src/univalue/*' \
+    2>/dev/null); do \
+    [ -f "$f" ] || continue; \
+    sed -i \
+      -e 's/"Bitcoin Core"/"OrdexCoin Core"/g' \
+      -e 's/"bitcoin\.conf"/"ordexcoin.conf"/g' \
+      -e 's/"bitcoin\.pid"/"ordexcoin.pid"/g' \
+      -e 's/\bBITCOIND\b/ORDEXCOIND/g' \
+      -e 's/\bbitcoind\b/ordexcoind/g' \
+      "$f" 2>/dev/null; \
+  done; \
+  \
+  # Fix bitcoin module name in exception.cpp \
+  if [ -f src/util/exception.cpp ]; then \
+    sed -i 's/"bitcoin"/"ordexcoin"/g' src/util/exception.cpp; \
+  fi; \
+  \
+  # Fix signed message magic string \
+  if [ -f src/util/message.cpp ]; then \
+    sed -i 's/"Bitcoin Signed Message:/"OrdexCoin Signed Message:/g' src/util/message.cpp; \
+  fi
 
 RUN set -e; \
   DEPENDS_PREFIX="$PWD/depends/${HOST}"; \
   export CONFIG_SITE="${DEPENDS_PREFIX}/share/config.site"; \
   export PKG_CONFIG_PATH="${DEPENDS_PREFIX}/lib/pkgconfig"; \
   export PKG_CONFIG_LIBDIR="${DEPENDS_PREFIX}/lib/pkgconfig"; \
+  chmod +x share/genbuild.sh; \
   ./autogen.sh; \
   ./configure \
     --prefix=/ \

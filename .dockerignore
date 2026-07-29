@@ -10,6 +10,7 @@ build_msvc/
 ci/
 contrib/debian/
 *.zip
+!Ordexcoin-Core-vASERT-4790.zip
 *.gz
 *.md
 build/
