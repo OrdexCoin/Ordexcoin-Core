@@ -215,6 +215,40 @@ RUN set -e; \
     sed -i 's/"Bitcoin Signed Message:/"OrdexCoin Signed Message:/g' src/util/message.cpp; \
   fi
 
+# Replace icon files with the OrdexCoin logo
+COPY icons/ /icons/
+RUN set -e; \
+  mkdir -p src/qt/android/res/drawable-ldpi src/qt/android/res/drawable-mdpi \
+    src/qt/android/res/drawable-hdpi src/qt/android/res/drawable-xhdpi \
+    src/qt/android/res/drawable-xxhdpi src/qt/android/res/drawable-xxxhdpi; \
+  cp /icons/ordexcoin16.png    share/pixmaps/ordexcoin16.png; \
+  cp /icons/ordexcoin32.png    share/pixmaps/ordexcoin32.png; \
+  cp /icons/ordexcoin64.png    share/pixmaps/ordexcoin64.png; \
+  cp /icons/ordexcoin128.png   share/pixmaps/ordexcoin128.png; \
+  cp /icons/ordexcoin256.png   share/pixmaps/ordexcoin256.png; \
+  cp /icons/ordexcoin16.xpm    share/pixmaps/ordexcoin16.xpm; \
+  cp /icons/ordexcoin32.xpm    share/pixmaps/ordexcoin32.xpm; \
+  cp /icons/ordexcoin64.xpm    share/pixmaps/ordexcoin64.xpm; \
+  cp /icons/ordexcoin128.xpm   share/pixmaps/ordexcoin128.xpm; \
+  cp /icons/ordexcoin256.xpm   share/pixmaps/ordexcoin256.xpm; \
+  cp /icons/ordexcoin.ico      share/pixmaps/ordexcoin.ico; \
+  cp /icons/nsis-header.bmp    share/pixmaps/nsis-header.bmp; \
+  cp /icons/nsis-wizard.bmp    share/pixmaps/nsis-wizard.bmp; \
+  cp /icons/ordexcoin_logo_doxygen.png doc/ordexcoin_logo_doxygen.png; \
+  cp /icons/ordexcoin1024.png  src/qt/res/icons/bitcoin.png; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/bitcoin.ico; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/bitcoin_testnet.ico; \
+  cp /icons/ordexcoin.png      src/qt/res/icons/ordexcoin.png; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/ordexcoin.ico; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/ordexcoin_testnet.ico; \
+  cp /icons/android/drawable-ldpi.png   src/qt/android/res/drawable-ldpi/ordexcoin.png; \
+  cp /icons/android/drawable-mdpi.png   src/qt/android/res/drawable-mdpi/ordexcoin.png; \
+  cp /icons/android/drawable-hdpi.png   src/qt/android/res/drawable-hdpi/ordexcoin.png; \
+  cp /icons/android/drawable-xhdpi.png  src/qt/android/res/drawable-xhdpi/ordexcoin.png; \
+  cp /icons/android/drawable-xxhdpi.png src/qt/android/res/drawable-xxhdpi/ordexcoin.png; \
+  cp /icons/android/drawable-xxxhdpi.png src/qt/android/res/drawable-xxxhdpi/ordexcoin.png; \
+  rm -rf /icons
+
 # Configure and build OrdexCoin Core
 RUN chmod +x share/genbuild.sh && ./autogen.sh \
     && ./configure \

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" alt="OrdexCoin Logo" width="256">
+</p>
+
 # OrdexCoin Core v25.0.0
 
 Bitcoin Core v25.0 fork by the OrdexNetwork project with vASERT difficulty adjustment.
