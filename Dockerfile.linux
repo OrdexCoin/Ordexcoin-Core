@@ -1,0 +1,205 @@
+ARG UBUNTU_VERSION=22.04
+
+FROM ubuntu:${UBUNTU_VERSION} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf \
+    automake \
+    build-essential \
+    bsdmainutils \
+    ca-certificates \
+    cmake \
+    curl \
+    libtool \
+    pkg-config \
+    python3 \
+    patch \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Qt 5 GUI dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qtbase5-dev \
+    qttools5-dev \
+    qttools5-dev-tools \
+    qtwayland5 \
+    libqrencode-dev \
+    libxcb-xinerama0-dev \
+    libxcb-xkb-dev \
+    libxcb-util-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Boost, libevent, SQLite, ZMQ, UPnP, NAT-PMP, USDT
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libboost-dev \
+    libevent-dev \
+    libsqlite3-dev \
+    libzmq3-dev \
+    libminiupnpc-dev \
+    libnatpmp-dev \
+    systemtap-sdt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Extract full Bitcoin Core v25.0 source as base (fills all missing files)
+RUN wget -q https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0.tar.gz \
+    && tar -xf bitcoin-25.0.tar.gz --strip-components=1 \
+    && rm -rf bitcoin-25.0.tar.gz
+
+# Overlay OrdexCoin source on top (user files take precedence)
+COPY . .
+
+# Build Berkeley DB 4.8 from source (legacy wallet compatibility)
+ENV BDB_PREFIX=/opt/bdb
+RUN wget -q https://download.oracle.com/berkeley-db/db-4.8.30.NC.tar.gz \
+    && tar -xf db-4.8.30.NC.tar.gz \
+    && rm db-4.8.30.NC.tar.gz \
+    && cd db-4.8.30.NC \
+    && patch -p1 < /src/depends/patches/bdb/clang_cxx_11.patch \
+    && cd build_unix \
+    && ../dist/configure --enable-cxx --disable-shared --with-pic --prefix="${BDB_PREFIX}" \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /src/db-4.8.30.NC
+
+# Makefile.qttest.include is missing the ENABLE_TESTS conditional wrapper
+# (fork issue). Add it so --disable-tests skips the Qt test binary.
+RUN sed -i '1i\if ENABLE_TESTS' src/Makefile.qttest.include \
+    && echo 'endif' >> src/Makefile.qttest.include
+
+# Patch source files that reference ORDEXCOIN_* constants which the
+# incomplete checkout never defined (Bitcoin Core overlay provides BITCOIN_*).
+RUN sed -i 's/ORDEXCOIN_CONF_FILENAME/BITCOIN_CONF_FILENAME/g; s/ORDEXCOIN_SETTINGS_FILENAME/BITCOIN_SETTINGS_FILENAME/g' \
+    src/init.cpp src/ordexcoin-cli.cpp
+
+# The fork renamed many bitcoin* source files to ordexcoin* but the renamed
+# files are missing from the checkout.  Bitcoin Core overlay provides the
+# originals; symlink all of them so the build system finds its targets.
+# Also patch class/function names inside the symlinked files to match
+# the OrdexCoin names (BitcoinUnits → OrdexCoinUnits, etc.).
+RUN set -e; \
+  for pair in \
+    src/script/ordexcoinconsensus.cpp:bitcoinconsensus.cpp \
+    src/script/ordexcoinconsensus.h:bitcoinconsensus.h \
+    src/qt/ordexcoinaddressvalidator.cpp:bitcoinaddressvalidator.cpp \
+    src/qt/ordexcoinaddressvalidator.h:bitcoinaddressvalidator.h \
+    src/qt/ordexcoinamountfield.cpp:bitcoinamountfield.cpp \
+    src/qt/ordexcoinamountfield.h:bitcoinamountfield.h \
+    src/qt/ordexcoin.cpp:bitcoin.cpp \
+    src/qt/ordexcoin.h:bitcoin.h \
+    src/qt/ordexcoingui.cpp:bitcoingui.cpp \
+    src/qt/ordexcoingui.h:bitcoingui.h \
+    src/qt/ordexcoinunits.cpp:bitcoinunits.cpp \
+    src/qt/ordexcoinunits.h:bitcoinunits.h \
+    src/qt/ordexcoin.qrc:bitcoin.qrc \
+    src/qt/res/icons/ordexcoin.ico:bitcoin.ico \
+    src/qt/res/icons/ordexcoin_testnet.ico:bitcoin_testnet.ico \
+    src/qt/res/icons/ordexcoin.png:bitcoin.png \
+    src/test/fuzz/script_ordexcoin_consensus.cpp:script_bitcoin_consensus.cpp \
+  ; do \
+    dst="${pair%%:*}"; base_src="${pair#*:}"; \
+    dir="$(dirname "$dst")"; \
+    if [ ! -f "$dst" ]; then mkdir -p "$dir" && (cd "$dir" && ln -sf "$base_src" "$(basename $dst)"); fi; \
+  done; \
+  \
+  # Create locale symlinks for all bitcoin_*.ts files \
+  for f in src/qt/locale/bitcoin_*.ts; do \
+    bname="$(basename "$f")"; \
+    orname="src/qt/locale/$(echo "$bname" | sed 's/^bitcoin_/ordexcoin_/')"; \
+    if [ ! -f "$orname" ] && [ ! -L "$orname" ]; then \
+      ln -sf "$bname" "$orname"; \
+    fi; \
+  done; \
+  \
+  # Replace broken .ts files \
+  for f in src/qt/locale/ordexcoin_*.ts; do \
+    base="src/qt/locale/$(echo "$(basename "$f")" | sed 's/ordexcoin_/bitcoin_/')"; \
+    if [ -f "$base" ] && head -1 "$f" 2>/dev/null | grep -qv '<?xml'; then \
+      rm -f "$f" && ln -sf "$(basename "$base")" "$f"; \
+    fi; \
+  done; \
+  \
+  # Create ordexcoin_locale.qrc \
+  sed 's/bitcoin_/ordexcoin_/g' src/qt/bitcoin_locale.qrc > src/qt/ordexcoin_locale.qrc; \
+  \
+  # Fix .moc include paths \
+  for f in src/qt/bitcoin*.cpp; do \
+    if grep -q '#include.*qt/bitcoin.*\.moc' "$f" 2>/dev/null; then \
+      sed -i 's|#include <qt/bitcoin\(.*\)\.moc>|#include <qt/ordexcoin\1.moc>|' "$f"; \
+    fi; \
+  done; \
+  \
+  # Rename identifiers across all Qt .cpp and .h files \
+  for f in src/qt/*.cpp src/qt/*.h; do \
+    [ -f "$f" ] || continue; \
+    sed -i \
+      -e 's/\bbitcoinAtStartup\b/ordexcoinAtStartup/g' \
+      -e 's/\bopenBitcoinConf/openOrdexCoinConf/g' \
+      -e 's/\bclass BitcoinGUI\b/class OrdexCoinGUI/g' \
+      -e 's/\bBitcoinGUI\b/OrdexCoinGUI/g' \
+      -e 's/\bBitcoinUnits\b/OrdexCoinUnits/g' \
+      -e 's/\bBitcoinUnit\b/OrdexCoinUnit/g' \
+      -e 's/\bBitcoinAddressValidator\b/OrdexCoinAddressValidator/g' \
+      -e 's/\bBitcoinAddressEntryValidator\b/OrdexCoinAddressEntryValidator/g' \
+      -e 's/\bBitcoinAddressCheckValidator\b/OrdexCoinAddressCheckValidator/g' \
+      -e 's/\bBitcoinAmountField\b/OrdexCoinAmountField/g' \
+      -e 's/\bparseBitcoinURI\b/parseOrdexCoinURI/g' \
+      -e 's/\bformatBitcoinURI\b/formatOrdexCoinURI/g' \
+      -e 's/Q_INIT_RESOURCE(bitcoin)/Q_INIT_RESOURCE(ordexcoin)/g' \
+      -e 's/Q_INIT_RESOURCE(bitcoin_locale)/Q_INIT_RESOURCE(ordexcoin_locale)/g' \
+      -e 's/Q_CLEANUP_RESOURCE(bitcoin)/Q_CLEANUP_RESOURCE(ordexcoin)/g' \
+      -e 's/Q_CLEANUP_RESOURCE(bitcoin_locale)/Q_CLEANUP_RESOURCE(ordexcoin_locale)/g' \
+      -e 's/\bBTC\b/OXC/g' \
+      -e 's/\bmBTC\b/mOXC/g' \
+      -e 's/\buBTC\b/uOXC/g' \
+      "$f" 2>/dev/null; \
+  done
+
+# Configure and build OrdexCoin Core
+RUN ./autogen.sh \
+    && ./configure \
+        BDB_LIBS="-L${BDB_PREFIX}/lib -ldb_cxx-4.8" \
+        BDB_CFLAGS="-I${BDB_PREFIX}/include" \
+        --prefix=/opt/ordexcoin \
+        --enable-cxx \
+        --with-gui=qt5 \
+        --disable-tests \
+        --disable-bench \
+    && ln -sf ordexcoin-config.h src/config/bitcoin-config.h \
+    && make -j$(nproc) \
+    && make install \
+    && strip /opt/ordexcoin/bin/*
+
+# Stage 2: Minimal runtime image
+FROM ubuntu:${UBUNTU_VERSION} AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libevent-2.1-7 \
+    libevent-pthreads-2.1-7 \
+    libboost-system1.74.0 \
+    libboost-filesystem1.74.0 \
+    libboost-thread1.74.0 \
+    libsqlite3-0 \
+    libzmq5 \
+    libminiupnpc17 \
+    libnatpmp1 \
+    libqt5gui5 \
+    libqt5core5a \
+    libqt5dbus5 \
+    libqrencode4 \
+    libfontconfig1 \
+    libfreetype6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/ordexcoin /opt/ordexcoin
+
+ENV PATH="/opt/ordexcoin/bin:${PATH}"
+
+EXPOSE 8332 8333 18332 18333
+
+ENTRYPOINT ["ordexcoind"]
+CMD ["-printtoconsole"]
