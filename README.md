@@ -169,4 +169,14 @@ The only remaining `bitcoin` strings in the binary are legitimate protocol refer
 
 ## Attribution
 
-This software is based on Bitcoin Core v25.0. Original copyright by The Bitcoin Core developers.
+This software is based on Bitcoin Core v25.0. Original copyright by The Bitcoin Core developers. Modifications by OrdexNetwork developers. 
+
+## Support continous development
+
+Support on-going development and infrastructure costs.
+
+- EVM: 0x6e8e3c2b31424266e7cff59e910df1587c317427
+- BTC: bc1qzzvcguvqjc6qhwe2y5vy38w2zke7hksukjhm68
+- LTC: MPfm5QLKH1r9XxgWmH75Gyps4LDfX5c53L
+- SOL: GGEaCMpnyM8tB5BU4RMuLm6tgMr3q9FgMHodxDxxAGby
+
