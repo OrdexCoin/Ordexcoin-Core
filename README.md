@@ -179,4 +179,4 @@ Support on-going development and infrastructure costs.
 - BTC: bc1qzzvcguvqjc6qhwe2y5vy38w2zke7hksukjhm68
 - LTC: MPfm5QLKH1r9XxgWmH75Gyps4LDfX5c53L
 - SOL: GGEaCMpnyM8tB5BU4RMuLm6tgMr3q9FgMHodxDxxAGby
-
+- OXC: oxc1qcjav0mpjjvufc2zwfddnmep0janwv0czwk657e
