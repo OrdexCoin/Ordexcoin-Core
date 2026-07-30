@@ -22,6 +22,20 @@ Output: `build/ordexcoin-v25.0.0-linux-x86_64.tar.gz`
 
 Binaries: `ordexcoind`, `ordexcoin-cli`, `ordexcoin-tx`, `ordexcoin-wallet`, `ordexcoin-util`, `ordexcoin-qt`
 
+#### Static build
+
+Builds all dependencies from source (Boost, Qt 5.15, BDB 4.8, libevent, etc.) and links them statically. The daemon binaries have no external shared library dependencies beyond libc/libstdc++:
+
+```sh
+./build-docker-linux.sh --static
+# or equivalently:
+./build-docker-linux-static.sh
+```
+
+Output: `build/ordexcoin-v25.0.0-linux-x86_64-static.tar.gz`
+
+Binaries: `ordexcoind-static`, `ordexcoin-cli-static`, `ordexcoin-tx-static`, `ordexcoin-wallet-static`, `ordexcoin-util-static`, `ordexcoin-qt-static`
+
 ### Windows (cross-compile)
 
 ```sh
