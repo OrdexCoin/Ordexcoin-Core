@@ -1,0 +1,264 @@
+ARG UBUNTU_VERSION=22.04
+
+FROM ubuntu:${UBUNTU_VERSION} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HOST=x86_64-pc-linux-gnu
+
+# Build tools + XCB deps needed by depends system for Qt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf \
+    automake \
+    binutils \
+    bison \
+    bsdmainutils \
+    build-essential \
+    ca-certificates \
+    cmake \
+    curl \
+    flex \
+    g++ \
+    git \
+    libtool \
+    libtool-bin \
+    make \
+    patch \
+    pkg-config \
+    python3 \
+    unzip \
+    wget \
+    libxcb-xinerama0-dev \
+    libxcb-xkb-dev \
+    libxcb-util-dev \
+    libxcb-shm0-dev \
+    libxcb-icccm4-dev \
+    libxcb-image0-dev \
+    libxcb-keysyms1-dev \
+    libxcb-randr0-dev \
+    libxcb-render-util0-dev \
+    libxcb-render0-dev \
+    libxcb-sync-dev \
+    libfontconfig1-dev \
+    libfreetype-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Copy the OrdexCoin overlay zip
+COPY Ordexcoin-Core-vASERT-4790.zip .
+
+# Extract source files needed for cross-compile dependency build
+# Normalize Windows backslash paths to forward slashes for Linux.
+COPY extract-zip.py /usr/local/bin/extract-zip.py
+RUN python3 /usr/local/bin/extract-zip.py Ordexcoin-Core-vASERT-4790.zip
+
+# Qt 5.15.5 was moved from official_releases to archive on download.qt.io.
+# Patch the download path in the qt package file so the depends system
+# uses the correct URL.
+RUN sed -i 's|official_releases|archive|' depends/packages/qt.mk
+
+# Build depends system to /opt/depends (not in-tree) so it survives
+# the subsequent zip extraction which would overwrite an in-tree depends/ dir.
+# Zip extraction loses execute permissions on depends/ scripts.
+RUN chmod +x depends/config.guess depends/config.sub depends/gen_id 2>/dev/null; \
+    make -C depends HOST="${HOST}" -j$(nproc) \
+    && mkdir -p /opt/depends \
+    && cp -a "depends/${HOST}" "/opt/depends/${HOST}"
+
+# Extract Bitcoin Core v25.0 source as base
+RUN curl -sL https://bitcoincore.org/bin/bitcoin-core-25.0/bitcoin-25.0.tar.gz -o bitcoin-25.0.tar.gz \
+    && tar -xf bitcoin-25.0.tar.gz --strip-components=1 \
+    && rm -rf bitcoin-25.0.tar.gz
+
+# Overlay full OrdexCoin source on top from the zip archive
+RUN python3 /usr/local/bin/extract-zip.py Ordexcoin-Core-vASERT-4790.zip && rm Ordexcoin-Core-vASERT-4790.zip
+
+# Restore system m4 macros that the zip overlay may have removed from build-aux/
+RUN cp /usr/share/aclocal/pkg.m4 build-aux/m4/
+
+# Remove the un-built depends/ from the checkout, restore the built one
+RUN rm -rf "depends/${HOST}" \
+    && cp -a "/opt/depends/${HOST}" "depends/${HOST}"
+
+# Makefile.qttest.include is missing the ENABLE_TESTS conditional wrapper (fork issue).
+# Create symlinks for missing ordexcoin* -> bitcoin* files, locale symlinks,
+# and rename identifiers to match the OrdexCoin fork.
+RUN set -e; \
+  sed -i '1i\if ENABLE_TESTS' src/Makefile.qttest.include \
+    && echo 'endif' >> src/Makefile.qttest.include; \
+  sed -i \
+    -e 's/BITCOIN_CONF_FILENAME/ORDEXCOIN_CONF_FILENAME/g' \
+    -e 's/BITCOIN_SETTINGS_FILENAME/ORDEXCOIN_SETTINGS_FILENAME/g' \
+    -e 's/"bitcoin\.conf"/"ordexcoin.conf"/g' \
+    -e 's|"/\.bitcoin"|"/.ordexcoin"|g' \
+    -e 's|"\.bitcoin"|".ordexcoin"|g' \
+    -e 's|"Bitcoin"|"Ordexcoin"|g' \
+    src/util/system.cpp; \
+  sed -i \
+    -e 's/BITCOIN_CONF_FILENAME/ORDEXCOIN_CONF_FILENAME/g' \
+    -e 's/BITCOIN_SETTINGS_FILENAME/ORDEXCOIN_SETTINGS_FILENAME/g' \
+    src/util/system.h; \
+  \
+  for pair in \
+    src/script/ordexcoinconsensus.cpp:bitcoinconsensus.cpp \
+    src/script/ordexcoinconsensus.h:bitcoinconsensus.h \
+    src/qt/ordexcoinaddressvalidator.cpp:bitcoinaddressvalidator.cpp \
+    src/qt/ordexcoinaddressvalidator.h:bitcoinaddressvalidator.h \
+    src/qt/ordexcoinamountfield.cpp:bitcoinamountfield.cpp \
+    src/qt/ordexcoinamountfield.h:bitcoinamountfield.h \
+    src/qt/ordexcoin.cpp:bitcoin.cpp \
+    src/qt/ordexcoin.h:bitcoin.h \
+    src/qt/ordexcoingui.cpp:bitcoingui.cpp \
+    src/qt/ordexcoingui.h:bitcoingui.h \
+    src/qt/ordexcoinunits.cpp:bitcoinunits.cpp \
+    src/qt/ordexcoinunits.h:bitcoinunits.h \
+    src/qt/ordexcoin.qrc:bitcoin.qrc \
+    src/qt/res/icons/ordexcoin.ico:bitcoin.ico \
+    src/qt/res/icons/ordexcoin_testnet.ico:bitcoin_testnet.ico \
+    src/qt/res/icons/ordexcoin.png:bitcoin.png \
+    src/qt/res/ordexcoin-qt-res.rc:bitcoin-qt-res.rc \
+    src/test/fuzz/script_ordexcoin_consensus.cpp:script_bitcoin_consensus.cpp \
+  ; do \
+    dst="${pair%%:*}"; base_src="${pair#*:}"; \
+    dir="$(dirname "$dst")"; \
+    if [ ! -f "$dst" ]; then mkdir -p "$dir" && (cd "$dir" && ln -sf "$base_src" "$(basename $dst)"); fi; \
+  done; \
+  \
+  for f in src/qt/locale/bitcoin_*.ts; do \
+    bname="$(basename "$f")"; \
+    orname="src/qt/locale/$(echo "$bname" | sed 's/^bitcoin_/ordexcoin_/')"; \
+    if [ ! -f "$orname" ] && [ ! -L "$orname" ]; then \
+      ln -sf "$bname" "$orname"; \
+    fi; \
+  done; \
+  \
+  for f in src/qt/locale/ordexcoin_*.ts; do \
+    base="src/qt/locale/$(echo "$(basename "$f")" | sed 's/ordexcoin_/bitcoin_/')"; \
+    if [ -f "$base" ] && head -1 "$f" 2>/dev/null | grep -qv '<?xml'; then \
+      rm -f "$f" && ln -sf "$(basename "$base")" "$f"; \
+    fi; \
+  done; \
+  \
+  sed 's/bitcoin_/ordexcoin_/g' src/qt/bitcoin_locale.qrc > src/qt/ordexcoin_locale.qrc; \
+  \
+  for f in src/qt/bitcoin*.cpp; do \
+    if grep -q '#include.*qt/bitcoin.*\.moc' "$f" 2>/dev/null; then \
+      sed -i 's|#include <qt/bitcoin\(.*\)\.moc>|#include <qt/ordexcoin\1.moc>|' "$f"; \
+    fi; \
+  done; \
+  \
+  for f in src/qt/*.cpp src/qt/*.h; do \
+    [ -f "$f" ] || continue; \
+    sed -i \
+      -e 's/\bbitcoinAtStartup\b/ordexcoinAtStartup/g' \
+      -e 's/\bopenBitcoinConf/openOrdexCoinConf/g' \
+      -e 's/\bclass BitcoinGUI\b/class OrdexCoinGUI/g' \
+      -e 's/\bBitcoinGUI\b/OrdexCoinGUI/g' \
+      -e 's/\bBitcoinUnits\b/OrdexCoinUnits/g' \
+      -e 's/\bBitcoinUnit\b/OrdexCoinUnit/g' \
+      -e 's/\bBitcoinAddressValidator\b/OrdexCoinAddressValidator/g' \
+      -e 's/\bBitcoinAddressEntryValidator\b/OrdexCoinAddressEntryValidator/g' \
+      -e 's/\bBitcoinAddressCheckValidator\b/OrdexCoinAddressCheckValidator/g' \
+      -e 's/\bBitcoinAmountField\b/OrdexCoinAmountField/g' \
+      -e 's/\bparseBitcoinURI\b/parseOrdexCoinURI/g' \
+      -e 's/\bformatBitcoinURI\b/formatOrdexCoinURI/g' \
+      -e 's/Q_INIT_RESOURCE(bitcoin)/Q_INIT_RESOURCE(ordexcoin)/g' \
+      -e 's/Q_INIT_RESOURCE(bitcoin_locale)/Q_INIT_RESOURCE(ordexcoin_locale)/g' \
+      -e 's/Q_CLEANUP_RESOURCE(bitcoin)/Q_CLEANUP_RESOURCE(ordexcoin)/g' \
+      -e 's/Q_CLEANUP_RESOURCE(bitcoin_locale)/Q_CLEANUP_RESOURCE(ordexcoin_locale)/g' \
+      -e 's/\bBTC\b/OXC/g' \
+      -e 's/\bmBTC\b/mOXC/g' \
+      -e 's/\buBTC\b/uOXC/g' \
+      -e 's/"bitcoin-qt"/"ordexcoin-qt"/g' \
+      -e 's/"bitcoin:"/"ordexcoin:"/g' \
+      -e 's/"bitcoin:\/\//"ordexcoin:\/\//g' \
+      -e 's/"bitcoin-core"/"ordexcoin-core"/g' \
+      -e 's/\bBITCOIND\b/ORDEXCOIND/g' \
+      -e 's/\bbitcoind\b/ordexcoind/g' \
+      -e 's/"Bitcoin block chain"/"OrdexCoin block chain"/g' \
+      -e 's/"Bitcoin command-line options"/"OrdexCoin command-line options"/g' \
+      -e 's/"Bitcoin network"/"OrdexCoin network"/g' \
+      -e 's/"Enter a Bitcoin address"/"Enter an OrdexCoin address"/g' \
+      "$f" 2>/dev/null; \
+  done; \
+  \
+  for f in $(find src/ -name '*.cpp' -o -name '*.h' \
+    -not -path 'src/qt/*' \
+    -not -path 'src/leveldb/*' \
+    -not -path 'src/crc32c/*' \
+    -not -path 'src/minisketch/*' \
+    -not -path 'src/secp256k1/*' \
+    -not -path 'src/univalue/*' \
+    2>/dev/null); do \
+    [ -f "$f" ] || continue; \
+    sed -i \
+      -e 's/"Bitcoin Core"/"OrdexCoin Core"/g' \
+      -e 's/"bitcoin\.conf"/"ordexcoin.conf"/g' \
+      -e 's/"bitcoin\.pid"/"ordexcoin.pid"/g' \
+      -e 's/\bBITCOIND\b/ORDEXCOIND/g' \
+      -e 's/\bbitcoind\b/ordexcoind/g' \
+      "$f" 2>/dev/null; \
+  done; \
+  \
+  if [ -f src/util/exception.cpp ]; then \
+    sed -i 's/"bitcoin"/"ordexcoin"/g' src/util/exception.cpp; \
+  fi; \
+  \
+  if [ -f src/util/message.cpp ]; then \
+    sed -i 's/"Bitcoin Signed Message:/"OrdexCoin Signed Message:/g' src/util/message.cpp; \
+  fi
+
+# Replace icon files with the OrdexCoin logo
+COPY icons/ /icons/
+RUN set -e; \
+  mkdir -p src/qt/android/res/drawable-ldpi src/qt/android/res/drawable-mdpi \
+    src/qt/android/res/drawable-hdpi src/qt/android/res/drawable-xhdpi \
+    src/qt/android/res/drawable-xxhdpi src/qt/android/res/drawable-xxxhdpi; \
+  cp /icons/ordexcoin16.png    share/pixmaps/ordexcoin16.png; \
+  cp /icons/ordexcoin32.png    share/pixmaps/ordexcoin32.png; \
+  cp /icons/ordexcoin64.png    share/pixmaps/ordexcoin64.png; \
+  cp /icons/ordexcoin128.png   share/pixmaps/ordexcoin128.png; \
+  cp /icons/ordexcoin256.png   share/pixmaps/ordexcoin256.png; \
+  cp /icons/ordexcoin16.xpm    share/pixmaps/ordexcoin16.xpm; \
+  cp /icons/ordexcoin32.xpm    share/pixmaps/ordexcoin32.xpm; \
+  cp /icons/ordexcoin64.xpm    share/pixmaps/ordexcoin64.xpm; \
+  cp /icons/ordexcoin128.xpm   share/pixmaps/ordexcoin128.xpm; \
+  cp /icons/ordexcoin256.xpm   share/pixmaps/ordexcoin256.xpm; \
+  cp /icons/ordexcoin.ico      share/pixmaps/ordexcoin.ico; \
+  cp /icons/nsis-header.bmp    share/pixmaps/nsis-header.bmp; \
+  cp /icons/nsis-wizard.bmp    share/pixmaps/nsis-wizard.bmp; \
+  cp /icons/ordexcoin_logo_doxygen.png doc/ordexcoin_logo_doxygen.png; \
+  cp /icons/ordexcoin1024.png  src/qt/res/icons/bitcoin.png; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/bitcoin.ico; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/bitcoin_testnet.ico; \
+  cp /icons/ordexcoin.png      src/qt/res/icons/ordexcoin.png; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/ordexcoin.ico; \
+  cp /icons/ordexcoin.ico      src/qt/res/icons/ordexcoin_testnet.ico; \
+  cp /icons/android/drawable-ldpi.png   src/qt/android/res/drawable-ldpi/ordexcoin.png; \
+  cp /icons/android/drawable-mdpi.png   src/qt/android/res/drawable-mdpi/ordexcoin.png; \
+  cp /icons/android/drawable-hdpi.png   src/qt/android/res/drawable-hdpi/ordexcoin.png; \
+  cp /icons/android/drawable-xhdpi.png  src/qt/android/res/drawable-xhdpi/ordexcoin.png; \
+  cp /icons/android/drawable-xxhdpi.png src/qt/android/res/drawable-xxhdpi/ordexcoin.png; \
+  cp /icons/android/drawable-xxxhdpi.png src/qt/android/res/drawable-xxxhdpi/ordexcoin.png; \
+  rm -rf /icons
+
+# Configure and build OrdexCoin Core with static depends
+RUN set -e; \
+  DEPENDS_PREFIX="$PWD/depends/${HOST}"; \
+  export CONFIG_SITE="${DEPENDS_PREFIX}/share/config.site"; \
+  chmod +x share/genbuild.sh; \
+  ./autogen.sh; \
+  ./configure \
+    --prefix=/opt/ordexcoin \
+    --with-gui=qt5 \
+    --disable-tests \
+    --disable-bench; \
+  ln -sf ordexcoin-config.h src/config/bitcoin-config.h; \
+  make -j$(nproc); \
+  make install; \
+  strip /opt/ordexcoin/bin/*
+
+# Stage 2: Minimal runtime image (really minimal since static)
+FROM scratch AS export
+
+COPY --from=builder /opt/ordexcoin /
